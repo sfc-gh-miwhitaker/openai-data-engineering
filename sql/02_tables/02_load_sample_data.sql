@@ -33,7 +33,7 @@ SELECT OBJECT_CONSTRUCT_KEEP_NULL(
         'completion_tokens',          ct,
         'total_tokens',               pt + ct,
         'prompt_tokens_details',      OBJECT_CONSTRUCT(
-            'cached_tokens',          LEAST(pt, UNIFORM(0, pt, RANDOM())),
+            'cached_tokens',          LEAST(pt, UNIFORM(0, 1024, RANDOM())),
             'audio_tokens',           0
         ),
         'completion_tokens_details',  OBJECT_CONSTRUCT(
