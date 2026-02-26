@@ -88,7 +88,10 @@ The Cortex AI enrichment tables use Snowflake Cortex functions which consume cre
 - `CLASSIFY_TEXT` - Text classification
 - `SENTIMENT` - Sentiment scoring
 - `SUMMARIZE` - Content summarization
-- `COMPLETE` - LLM inference for PII detection
+- `COMPLETE` - LLM inference for PII detection (uses `claude-opus-4-6` per customer request)
+
+**Model Selection:** This demo uses `claude-opus-4-6` per customer request.
+For cost/performance optimization, consider `llama3.1-70b` or `mistral-large2`.
 
 For cost-conscious deployments, consider:
 - Adding WHERE filters to limit processed rows

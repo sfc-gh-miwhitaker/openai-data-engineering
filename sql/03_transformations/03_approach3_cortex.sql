@@ -20,8 +20,10 @@ Classifies topic, scores sentiment, and summarizes long content.
 
 NOTE: Cortex LLM functions consume credits. In production, consider:
   - Filtering to only new/unprocessed rows
-  - Using gpt-4o-mini equivalent (snowflake-arctic or mistral-large) for cost
   - Caching results in a persistent table instead of a dynamic table
+
+MODEL SELECTION: Using claude-opus-4-6 per customer request.
+  - Recommended for cost/performance: llama3.1-70b or mistral-large2
 ------------------------------------------------------------------------------*/
 
 CREATE OR REPLACE DYNAMIC TABLE DT_ENRICHED_COMPLETIONS
@@ -144,6 +146,9 @@ FROM classified;
 /*------------------------------------------------------------------------------
 DT_PII_SCAN — Scan completion content and tool call arguments for PII.
 Uses Cortex COMPLETE with a focused prompt to detect sensitive data patterns.
+
+MODEL SELECTION: Using claude-opus-4-6 per customer request.
+  - Recommended for cost/performance: llama3.1-70b or mistral-large2
 ------------------------------------------------------------------------------*/
 
 CREATE OR REPLACE DYNAMIC TABLE DT_PII_SCAN
@@ -181,7 +186,7 @@ scanned AS (
         text_to_scan,
         created_at,
         SNOWFLAKE.CORTEX.COMPLETE(
-            'llama3.1-70b',
+            'claude-opus-4-6',
             'Analyze the following text and return ONLY a JSON object with these fields: '
             || '{"has_pii": true/false, "pii_types": ["list of types found"], '
             || '"risk_level": "none/low/medium/high"}. '
