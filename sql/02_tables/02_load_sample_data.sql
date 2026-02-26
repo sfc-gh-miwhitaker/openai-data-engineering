@@ -1,135 +1,429 @@
 /*==============================================================================
 SAMPLE DATA - OpenAI Data Engineering
-Realistic synthetic OpenAI API responses covering:
-  - Chat Completions (text, tool calls, multi-turn, refusals)
-  - Batch API output (wrapped completions with custom_id)
-  - Usage API buckets (time-series token consumption)
+Uses GENERATOR + OBJECT_CONSTRUCT for escape-safe JSON generation.
+Generates → stages → loads, matching the real customer workflow.
 ==============================================================================*/
 
 USE SCHEMA SNOWFLAKE_EXAMPLE.OPENAI_DATA_ENG;
 
 -------------------------------------------------------------------------------
--- CHAT COMPLETIONS: Standard text responses
+-- GENERATE CHAT COMPLETIONS → STAGE
 -------------------------------------------------------------------------------
 
-INSERT INTO RAW_CHAT_COMPLETIONS (source_file, raw)
-SELECT 'api_log_2026-02-20.jsonl', PARSE_JSON(column1) FROM VALUES
+CREATE OR REPLACE TEMPORARY TABLE _stg_completions AS
 
--- Simple text completion
-('{"id":"chatcmpl-9a1b2c3d","object":"chat.completion","created":1740067200,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"Snowflake''s VARIANT data type stores semi-structured data in a compressed columnar format, supporting up to 16 MB per value. It automatically handles schema detection and enables dot-notation traversal for JSON, Avro, Parquet, and XML.","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":42,"completion_tokens":58,"total_tokens":100,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_a1b2c3d4"}'),
+-- Text completions (30 rows)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'id',                  'chatcmpl-' || id_sfx,
+    'object',              'chat.completion',
+    'created',             ts,
+    'model',               model_name,
+    'choices', ARRAY_CONSTRUCT(OBJECT_CONSTRUCT_KEEP_NULL(
+        'index',           0,
+        'message', OBJECT_CONSTRUCT_KEEP_NULL(
+            'role',        'assistant',
+            'content',     content_text,
+            'refusal',     NULL
+        ),
+        'logprobs',        NULL,
+        'finish_reason',   IFF(finish_roll > 8, 'length', 'stop')
+    )),
+    'usage', OBJECT_CONSTRUCT(
+        'prompt_tokens',              pt,
+        'completion_tokens',          ct,
+        'total_tokens',               pt + ct,
+        'prompt_tokens_details',      OBJECT_CONSTRUCT(
+            'cached_tokens',          LEAST(pt, UNIFORM(0, pt, RANDOM())),
+            'audio_tokens',           0
+        ),
+        'completion_tokens_details',  OBJECT_CONSTRUCT(
+            'reasoning_tokens',       IFF(model_name LIKE '%4o-2024%', UNIFORM(0, 128, RANDOM()), 0),
+            'audio_tokens',           0,
+            'accepted_prediction_tokens', 0,
+            'rejected_prediction_tokens', 0
+        )
+    ),
+    'system_fingerprint',  'fp_' || fp_sfx
+) AS data
+FROM (
+    SELECT
+        RANDSTR(10, RANDOM()) AS id_sfx,
+        RANDSTR(8, RANDOM())  AS fp_sfx,
+        UNIFORM(1740067200, 1740672000, RANDOM()) AS ts,
+        CASE UNIFORM(1, 3, RANDOM())
+            WHEN 1 THEN 'gpt-4o-2024-08-06'
+            WHEN 2 THEN 'gpt-4o-mini-2024-07-18'
+            ELSE        'gpt-4o-2024-08-06'
+        END AS model_name,
+        UNIFORM(20, 2000, RANDOM())  AS pt,
+        UNIFORM(10, 500, RANDOM())   AS ct,
+        UNIFORM(1, 10, RANDOM())     AS finish_roll,
+        CASE MOD(SEQ4(), 8)
+            WHEN 0 THEN 'Snowflake''s VARIANT data type stores semi-structured data in a compressed columnar format, supporting up to 16 MB per value. It automatically handles schema detection and enables dot-notation traversal for JSON, Avro, Parquet, and XML.'
+            WHEN 1 THEN 'Based on the Q4 earnings data, revenue grew 12% year-over-year to $2.1B. Key drivers include cloud migration acceleration in financial services, 34% growth in consumption-based contracts, and expansion in the APAC region. Operating margins improved 200bps to 28%.'
+            WHEN 2 THEN 'The current UTC time would need to come from a real-time source. You can use SELECT CURRENT_TIMESTAMP() in Snowflake to get the current timestamp in your session time zone.'
+            WHEN 3 THEN 'Machine learning pipelines typically involve several stages: data ingestion, feature engineering, model training, validation, and deployment. Raw data is collected from databases, APIs, and streaming platforms before feature engineering transforms it for modeling.'
+            WHEN 4 THEN 'I recommend a medallion architecture with bronze, silver, and gold layers for progressive data refinement. Bronze holds raw ingested data, silver applies schema enforcement and deduplication, and gold serves business-level aggregations.'
+            WHEN 5 THEN 'The report recommends migrating legacy on-prem data warehouses to a cloud-native architecture within 18 months. Key benefits include 40% cost reduction, 3x query performance, and elastic scaling. Risks include data gravity and team reskilling needs.'
+            WHEN 6 THEN 'Here is a Python function that trains a RandomForestClassifier on the provided DataFrame. It splits data 80/20 for train/test, fits 100 estimators, prints accuracy, and returns the trained model.'
+                        || CHR(10) || CHR(10)
+                        || 'def train_model(df, target_col):' || CHR(10)
+                        || '    from sklearn.ensemble import RandomForestClassifier' || CHR(10)
+                        || '    from sklearn.model_selection import train_test_split' || CHR(10)
+                        || '    X_train, X_test, y_train, y_test = train_test_split(' || CHR(10)
+                        || '        df.drop(columns=[target_col]), df[target_col], test_size=0.2)' || CHR(10)
+                        || '    model = RandomForestClassifier(n_estimators=100)' || CHR(10)
+                        || '    model.fit(X_train, y_train)' || CHR(10)
+                        || '    print(f"Accuracy: {model.score(X_test, y_test):.3f}")' || CHR(10)
+                        || '    return model'
+            ELSE 'To optimize Snowflake warehouse costs, use multi-cluster warehouses with auto-scaling policies. Set AUTO_SUSPEND to 60 seconds for interactive workloads, and use separate warehouses for ETL vs. BI to avoid resource contention.'
+        END AS content_text
+    FROM TABLE(GENERATOR(ROWCOUNT => 30))
+) g
 
--- Longer analytical response
-('{"id":"chatcmpl-e4f5g6h7","object":"chat.completion","created":1740067260,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"Based on the Q4 earnings data, revenue grew 12% year-over-year to $2.1B. Key drivers include: (1) cloud migration acceleration in financial services, (2) 34% growth in consumption-based contracts, and (3) expansion in the APAC region. Operating margins improved 200bps to 28%. The forward guidance of $2.3-2.4B for Q1 suggests continued momentum, though macro headwinds in European markets warrant monitoring.","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":1250,"completion_tokens":312,"total_tokens":1562,"prompt_tokens_details":{"cached_tokens":1024,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":128,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_e4f5g6h7"}'),
+UNION ALL
 
--- Short factual response
-('{"id":"chatcmpl-i8j9k0l1","object":"chat.completion","created":1740067320,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"The current UTC time would be needed from a real-time source. I don''t have access to live clocks.","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":18,"completion_tokens":24,"total_tokens":42,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_i8j9k0l1"}'),
+-- Tool call completions (8 rows)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'id',                  'chatcmpl-' || id_sfx,
+    'object',              'chat.completion',
+    'created',             ts,
+    'model',               'gpt-4o-2024-08-06',
+    'choices', ARRAY_CONSTRUCT(OBJECT_CONSTRUCT_KEEP_NULL(
+        'index',           0,
+        'message', OBJECT_CONSTRUCT_KEEP_NULL(
+            'role',        'assistant',
+            'content',     NULL,
+            'tool_calls',  ARRAY_CONSTRUCT(OBJECT_CONSTRUCT(
+                'id',       'call_' || RANDSTR(6, RANDOM()),
+                'type',     'function',
+                'function', OBJECT_CONSTRUCT(
+                    'name',      func_name,
+                    'arguments', func_args
+                )
+            )),
+            'refusal',     NULL
+        ),
+        'logprobs',        NULL,
+        'finish_reason',   'tool_calls'
+    )),
+    'usage', OBJECT_CONSTRUCT(
+        'prompt_tokens',              pt,
+        'completion_tokens',          ct,
+        'total_tokens',               pt + ct,
+        'prompt_tokens_details',      OBJECT_CONSTRUCT('cached_tokens', 0, 'audio_tokens', 0),
+        'completion_tokens_details',  OBJECT_CONSTRUCT(
+            'reasoning_tokens', 0, 'audio_tokens', 0,
+            'accepted_prediction_tokens', 0, 'rejected_prediction_tokens', 0
+        )
+    ),
+    'system_fingerprint',  'fp_' || fp_sfx
+) AS data
+FROM (
+    SELECT
+        RANDSTR(10, RANDOM()) AS id_sfx,
+        RANDSTR(8, RANDOM())  AS fp_sfx,
+        UNIFORM(1740067200, 1740672000, RANDOM()) AS ts,
+        UNIFORM(80, 400, RANDOM())   AS pt,
+        UNIFORM(20, 150, RANDOM())   AS ct,
+        CASE MOD(SEQ4(), 4)
+            WHEN 0 THEN 'get_weather'
+            WHEN 1 THEN 'execute_sql'
+            WHEN 2 THEN 'get_stock_price'
+            ELSE        'create_dashboard'
+        END AS func_name,
+        CASE MOD(SEQ4(), 4)
+            WHEN 0 THEN TO_VARCHAR(OBJECT_CONSTRUCT(
+                            'location', 'San Francisco, CA', 'unit', 'fahrenheit'))
+            WHEN 1 THEN TO_VARCHAR(OBJECT_CONSTRUCT(
+                            'query', 'SELECT customer_name, SUM(order_total) AS ltv FROM orders GROUP BY 1 ORDER BY 2 DESC LIMIT 10',
+                            'database', 'analytics'))
+            WHEN 2 THEN TO_VARCHAR(OBJECT_CONSTRUCT(
+                            'symbol', IFF(UNIFORM(1,2,RANDOM())=1, 'SNOW', 'MSFT')))
+            ELSE        TO_VARCHAR(OBJECT_CONSTRUCT(
+                            'title', 'Q4 Revenue Overview',
+                            'charts', ARRAY_CONSTRUCT(
+                                OBJECT_CONSTRUCT('type', 'bar', 'metric', 'revenue', 'groupBy', 'region'),
+                                OBJECT_CONSTRUCT('type', 'line', 'metric', 'growth_rate', 'groupBy', 'month')
+                            ),
+                            'sharing', OBJECT_CONSTRUCT('teams', ARRAY_CONSTRUCT('finance', 'executive'), 'public', FALSE)))
+        END AS func_args
+    FROM TABLE(GENERATOR(ROWCOUNT => 8))
+) g
 
--- Content filter triggered
-('{"id":"chatcmpl-m2n3o4p5","object":"chat.completion","created":1740067380,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":null,"refusal":"I''m unable to help with that request as it involves generating content that could be harmful."},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":35,"completion_tokens":22,"total_tokens":57,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_m2n3o4p5"}'),
+UNION ALL
 
--- Max tokens hit (length finish_reason)
-('{"id":"chatcmpl-q6r7s8t9","object":"chat.completion","created":1740067440,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"Machine learning pipelines typically involve several stages: data ingestion, feature engineering, model training, validation, and deployment. In the data ingestion phase, raw data is collected from various sources including databases, APIs, and streaming platforms. Feature engineering transforms this raw data into","refusal":null},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":56,"completion_tokens":50,"total_tokens":106,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_q6r7s8t9"}'),
+-- Structured output completions (7 rows)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'id',                  'chatcmpl-' || id_sfx,
+    'object',              'chat.completion',
+    'created',             ts,
+    'model',               'gpt-4o-2024-08-06',
+    'choices', ARRAY_CONSTRUCT(OBJECT_CONSTRUCT_KEEP_NULL(
+        'index',           0,
+        'message', OBJECT_CONSTRUCT_KEEP_NULL(
+            'role',        'assistant',
+            'content',     struct_content,
+            'refusal',     NULL
+        ),
+        'logprobs',        NULL,
+        'finish_reason',   'stop'
+    )),
+    'usage', OBJECT_CONSTRUCT(
+        'prompt_tokens',              pt,
+        'completion_tokens',          ct,
+        'total_tokens',               pt + ct,
+        'prompt_tokens_details',      OBJECT_CONSTRUCT('cached_tokens', 0, 'audio_tokens', 0),
+        'completion_tokens_details',  OBJECT_CONSTRUCT(
+            'reasoning_tokens', 0, 'audio_tokens', 0,
+            'accepted_prediction_tokens', 0, 'rejected_prediction_tokens', 0
+        )
+    ),
+    'system_fingerprint',  'fp_' || fp_sfx
+) AS data
+FROM (
+    SELECT
+        RANDSTR(10, RANDOM()) AS id_sfx,
+        RANDSTR(8, RANDOM())  AS fp_sfx,
+        UNIFORM(1740067200, 1740672000, RANDOM()) AS ts,
+        UNIFORM(200, 1000, RANDOM()) AS pt,
+        UNIFORM(30, 200, RANDOM())   AS ct,
+        CASE MOD(SEQ4(), 3)
+            WHEN 0 THEN TO_VARCHAR(OBJECT_CONSTRUCT(
+                'sentiment',  CASE UNIFORM(1,3,RANDOM()) WHEN 1 THEN 'positive' WHEN 2 THEN 'negative' ELSE 'neutral' END,
+                'confidence', ROUND(UNIFORM(0.65, 0.99, RANDOM())::FLOAT, 2),
+                'topics',     ARRAY_CONSTRUCT('product_quality', 'customer_service'),
+                'entities',   ARRAY_CONSTRUCT(
+                    OBJECT_CONSTRUCT('name', 'Acme Widget Pro', 'type', 'product'),
+                    OBJECT_CONSTRUCT('name', 'Sarah Chen', 'type', 'person')
+                ),
+                'summary',    'Customer expresses high satisfaction with product quality and support responsiveness.'
+            ))
+            WHEN 1 THEN TO_VARCHAR(OBJECT_CONSTRUCT(
+                'invoice_number', 'INV-2026-' || LPAD(UNIFORM(100, 9999, RANDOM())::VARCHAR, 4, '0'),
+                'vendor',         'CloudTech Solutions',
+                'date',           '2026-01-15',
+                'line_items',     ARRAY_CONSTRUCT(
+                    OBJECT_CONSTRUCT('description', 'Cloud Compute (Jan)', 'quantity', 1, 'unit_price', 4500.00, 'total', 4500.00),
+                    OBJECT_CONSTRUCT('description', 'Storage (500TB)',     'quantity', 500, 'unit_price', 23.00, 'total', 11500.00),
+                    OBJECT_CONSTRUCT('description', 'Support Premium',    'quantity', 1, 'unit_price', 2000.00, 'total', 2000.00)
+                ),
+                'subtotal', 18000.00, 'tax', 1620.00, 'total', 19620.00, 'currency', 'USD'
+            ))
+            ELSE TO_VARCHAR(OBJECT_CONSTRUCT(
+                'category',          CASE UNIFORM(1,5,RANDOM()) WHEN 1 THEN 'billing' WHEN 2 THEN 'technical_support' WHEN 3 THEN 'feature_request' WHEN 4 THEN 'account_access' ELSE 'general_inquiry' END,
+                'priority',          CASE UNIFORM(1,3,RANDOM()) WHEN 1 THEN 'high' WHEN 2 THEN 'medium' ELSE 'low' END,
+                'sentiment',         CASE UNIFORM(1,3,RANDOM()) WHEN 1 THEN 'positive' WHEN 2 THEN 'negative' ELSE 'neutral' END,
+                'suggested_routing', CASE UNIFORM(1,5,RANDOM()) WHEN 1 THEN 'billing_escalation' WHEN 2 THEN 'tier2_support' WHEN 3 THEN 'product_feedback' WHEN 4 THEN 'security_team' ELSE 'self_service' END
+            ))
+        END AS struct_content
+    FROM TABLE(GENERATOR(ROWCOUNT => 7))
+) g
 
--- Multi-choice response (n=2)
-('{"id":"chatcmpl-u0v1w2x3","object":"chat.completion","created":1740067500,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"Option A: Use a medallion architecture with bronze, silver, and gold layers for progressive data refinement.","refusal":null},"logprobs":null,"finish_reason":"stop"},{"index":1,"message":{"role":"assistant","content":"Option B: Implement a hub-and-spoke model where raw data lands in a central repository and domain-specific views serve each team.","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":88,"completion_tokens":64,"total_tokens":152,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_u0v1w2x3"}'),
+UNION ALL
 
--- Code generation response
-('{"id":"chatcmpl-y4z5a6b7","object":"chat.completion","created":1740067560,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"```python\\nimport pandas as pd\\nfrom sklearn.ensemble import RandomForestClassifier\\nfrom sklearn.model_selection import train_test_split\\n\\ndef train_model(df: pd.DataFrame, target_col: str) -> RandomForestClassifier:\\n    X = df.drop(columns=[target_col])\\n    y = df[target_col]\\n    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)\\n    model = RandomForestClassifier(n_estimators=100)\\n    model.fit(X_train, y_train)\\n    print(f\\"Accuracy: {model.score(X_test, y_test):.3f}\\")\\n    return model\\n```","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":94,"completion_tokens":186,"total_tokens":280,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_y4z5a6b7"}'),
+-- Refusal completions (5 rows)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'id',                  'chatcmpl-' || RANDSTR(10, RANDOM()),
+    'object',              'chat.completion',
+    'created',             UNIFORM(1740067200, 1740672000, RANDOM()),
+    'model',               'gpt-4o-2024-08-06',
+    'choices', ARRAY_CONSTRUCT(OBJECT_CONSTRUCT_KEEP_NULL(
+        'index',           0,
+        'message', OBJECT_CONSTRUCT_KEEP_NULL(
+            'role',        'assistant',
+            'content',     NULL,
+            'refusal',     CASE MOD(SEQ4(), 3)
+                WHEN 0 THEN 'I''m unable to help with that request as it involves generating content that could be harmful.'
+                WHEN 1 THEN 'I cannot provide instructions for that activity as it may pose safety risks.'
+                ELSE        'This request falls outside my guidelines. I''d be happy to help with an alternative approach.'
+            END
+        ),
+        'logprobs',        NULL,
+        'finish_reason',   'stop'
+    )),
+    'usage', OBJECT_CONSTRUCT(
+        'prompt_tokens',              UNIFORM(20, 100, RANDOM()),
+        'completion_tokens',          UNIFORM(10, 30, RANDOM()),
+        'total_tokens',               UNIFORM(30, 130, RANDOM()),
+        'prompt_tokens_details',      OBJECT_CONSTRUCT('cached_tokens', 0, 'audio_tokens', 0),
+        'completion_tokens_details',  OBJECT_CONSTRUCT(
+            'reasoning_tokens', 0, 'audio_tokens', 0,
+            'accepted_prediction_tokens', 0, 'rejected_prediction_tokens', 0
+        )
+    ),
+    'system_fingerprint',  'fp_' || RANDSTR(8, RANDOM())
+) AS data
+FROM TABLE(GENERATOR(ROWCOUNT => 5));
 
--- Summarization response
-('{"id":"chatcmpl-c8d9e0f1","object":"chat.completion","created":1740067620,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"TL;DR: The report recommends migrating legacy on-prem data warehouses to a cloud-native architecture within 18 months. Key benefits include 40% cost reduction, 3x query performance, and elastic scaling. Risks include data gravity, compliance gaps during transition, and team reskilling needs.","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":4200,"completion_tokens":72,"total_tokens":4272,"prompt_tokens_details":{"cached_tokens":4096,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_c8d9e0f1"}');
+COPY INTO @openai_raw_stage/chat_completions/
+FROM (SELECT data FROM _stg_completions)
+FILE_FORMAT = (TYPE = 'JSON', COMPRESSION = NONE)
+SINGLE = TRUE
+OVERWRITE = TRUE;
+
+DROP TABLE _stg_completions;
 
 
 -------------------------------------------------------------------------------
--- CHAT COMPLETIONS: Tool/function calling responses
+-- GENERATE BATCH API OUTPUTS → STAGE
 -------------------------------------------------------------------------------
 
-INSERT INTO RAW_CHAT_COMPLETIONS (source_file, raw)
-SELECT 'api_log_2026-02-20.jsonl', PARSE_JSON(column1) FROM VALUES
+CREATE OR REPLACE TEMPORARY TABLE _stg_batch AS
 
--- Single tool call: weather lookup
-('{"id":"chatcmpl-tc01","object":"chat.completion","created":1740068000,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_w001","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"San Francisco, CA\",\"unit\":\"fahrenheit\"}"}}],"refusal":null},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":82,"completion_tokens":28,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_tc01"}'),
+-- Successful batch results (20 rows)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'id',        'batch_req_' || LPAD(SEQ4()::VARCHAR, 3, '0'),
+    'custom_id', 'ticket-classify-' || LPAD(UNIFORM(1000, 9999, RANDOM())::VARCHAR, 4, '0'),
+    'response', OBJECT_CONSTRUCT(
+        'status_code', 200,
+        'request_id',  'req_' || RANDSTR(8, RANDOM()),
+        'body', OBJECT_CONSTRUCT_KEEP_NULL(
+            'id',                  'chatcmpl-b' || RANDSTR(6, RANDOM()),
+            'object',              'chat.completion',
+            'created',             UNIFORM(1740070000, 1740080000, RANDOM()),
+            'model',               'gpt-4o-mini-2024-07-18',
+            'choices', ARRAY_CONSTRUCT(OBJECT_CONSTRUCT_KEEP_NULL(
+                'index',           0,
+                'message', OBJECT_CONSTRUCT_KEEP_NULL(
+                    'role',        'assistant',
+                    'content',     TO_VARCHAR(OBJECT_CONSTRUCT(
+                        'category',          CASE MOD(SEQ4(), 6) WHEN 0 THEN 'billing' WHEN 1 THEN 'technical_support' WHEN 2 THEN 'feature_request' WHEN 3 THEN 'account_access' WHEN 4 THEN 'outage_report' ELSE 'general_inquiry' END,
+                        'priority',          CASE MOD(SEQ4(), 3) WHEN 0 THEN 'high' WHEN 1 THEN 'medium' ELSE 'low' END,
+                        'sentiment',         CASE UNIFORM(1,3,RANDOM()) WHEN 1 THEN 'positive' WHEN 2 THEN 'negative' ELSE 'neutral' END,
+                        'suggested_routing', CASE MOD(SEQ4(), 6) WHEN 0 THEN 'billing_escalation' WHEN 1 THEN 'tier2_support' WHEN 2 THEN 'product_feedback' WHEN 3 THEN 'security_team' WHEN 4 THEN 'incident_response' ELSE 'self_service' END
+                    )),
+                    'refusal',     NULL
+                ),
+                'logprobs',        NULL,
+                'finish_reason',   'stop'
+            )),
+            'usage', OBJECT_CONSTRUCT(
+                'prompt_tokens',     pt,
+                'completion_tokens', ct,
+                'total_tokens',      pt + ct
+            ),
+            'system_fingerprint',  'fp_batch01'
+        )
+    ),
+    'error', NULL
+) AS data
+FROM (
+    SELECT
+        UNIFORM(150, 600, RANDOM()) AS pt,
+        UNIFORM(30, 50, RANDOM())   AS ct
+    FROM TABLE(GENERATOR(ROWCOUNT => 20))
+) g
 
--- Single tool call: database query
-('{"id":"chatcmpl-tc02","object":"chat.completion","created":1740068060,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_d001","type":"function","function":{"name":"execute_sql","arguments":"{\"query\":\"SELECT customer_name, SUM(order_total) AS lifetime_value FROM orders GROUP BY customer_name ORDER BY lifetime_value DESC LIMIT 10\",\"database\":\"analytics\"}"}}],"refusal":null},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":156,"completion_tokens":65,"total_tokens":221,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_tc02"}'),
+UNION ALL
 
--- Multiple parallel tool calls
-('{"id":"chatcmpl-tc03","object":"chat.completion","created":1740068120,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_m001","type":"function","function":{"name":"get_stock_price","arguments":"{\"symbol\":\"SNOW\"}"}},{"id":"call_m002","type":"function","function":{"name":"get_stock_price","arguments":"{\"symbol\":\"MSFT\"}"}},{"id":"call_m003","type":"function","function":{"name":"get_company_news","arguments":"{\"company\":\"Snowflake Inc\",\"days\":7}"}}],"refusal":null},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":210,"completion_tokens":95,"total_tokens":305,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_tc03"}'),
+-- Error batch results (5 rows)
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'id',        'batch_req_' || LPAD((100 + SEQ4())::VARCHAR, 3, '0'),
+    'custom_id', 'ticket-classify-' || LPAD(UNIFORM(1000, 9999, RANDOM())::VARCHAR, 4, '0'),
+    'response',  NULL,
+    'error', OBJECT_CONSTRUCT(
+        'code',    IFF(UNIFORM(1, 2, RANDOM()) = 1, 'rate_limit_exceeded', 'server_error'),
+        'message', IFF(UNIFORM(1, 2, RANDOM()) = 1,
+            'Rate limit reached for gpt-4o-mini in organization org-abc123 on tokens per min. Limit: 200000, Used: 198542, Requested: 3200.',
+            'The server had an error processing your request. Sorry about that!')
+    )
+) AS data
+FROM TABLE(GENERATOR(ROWCOUNT => 5));
 
--- Tool call with complex nested arguments
-('{"id":"chatcmpl-tc04","object":"chat.completion","created":1740068180,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_c001","type":"function","function":{"name":"create_dashboard","arguments":"{\"title\":\"Q4 Revenue Overview\",\"charts\":[{\"type\":\"bar\",\"metric\":\"revenue\",\"groupBy\":\"region\",\"filters\":{\"quarter\":\"Q4\",\"year\":2025}},{\"type\":\"line\",\"metric\":\"growth_rate\",\"groupBy\":\"month\",\"filters\":{\"year\":2025}}],\"sharing\":{\"teams\":[\"finance\",\"executive\"],\"public\":false}}"}}],"refusal":null},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":340,"completion_tokens":148,"total_tokens":488,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":64,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_tc04"}'),
+COPY INTO @openai_raw_stage/batch_outputs/
+FROM (SELECT data FROM _stg_batch)
+FILE_FORMAT = (TYPE = 'JSON', COMPRESSION = NONE)
+SINGLE = TRUE
+OVERWRITE = TRUE;
 
--- Tool call + text content together
-('{"id":"chatcmpl-tc05","object":"chat.completion","created":1740068240,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"I''ll look up the latest metrics for you. Let me query the database and check the current status.","tool_calls":[{"id":"call_h001","type":"function","function":{"name":"query_metrics","arguments":"{\"metric_names\":[\"cpu_utilization\",\"memory_usage\",\"disk_io\"],\"time_range\":\"last_24h\",\"aggregation\":\"avg\"}"}}],"refusal":null},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":178,"completion_tokens":88,"total_tokens":266,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_tc05"}'),
-
--- Structured output (JSON mode)
-('{"id":"chatcmpl-so01","object":"chat.completion","created":1740068300,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"{\"sentiment\":\"positive\",\"confidence\":0.92,\"topics\":[\"product_quality\",\"customer_service\"],\"entities\":[{\"name\":\"Acme Widget Pro\",\"type\":\"product\"},{\"name\":\"Sarah Chen\",\"type\":\"person\"}],\"summary\":\"Customer expresses high satisfaction with product quality and support responsiveness.\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":520,"completion_tokens":95,"total_tokens":615,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_so01"}'),
-
--- Another structured output
-('{"id":"chatcmpl-so02","object":"chat.completion","created":1740068360,"model":"gpt-4o-2024-08-06","choices":[{"index":0,"message":{"role":"assistant","content":"{\"invoice_number\":\"INV-2026-0847\",\"vendor\":\"CloudTech Solutions\",\"date\":\"2026-01-15\",\"line_items\":[{\"description\":\"Cloud Compute (Jan)\",\"quantity\":1,\"unit_price\":4500.00,\"total\":4500.00},{\"description\":\"Storage (500TB)\",\"quantity\":500,\"unit_price\":23.00,\"total\":11500.00},{\"description\":\"Support Premium\",\"quantity\":1,\"unit_price\":2000.00,\"total\":2000.00}],\"subtotal\":18000.00,\"tax\":1620.00,\"total\":19620.00,\"currency\":\"USD\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":890,"completion_tokens":210,"total_tokens":1100,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"system_fingerprint":"fp_so02"}');
+DROP TABLE _stg_batch;
 
 
 -------------------------------------------------------------------------------
--- BATCH API OUTPUTS
+-- GENERATE USAGE API BUCKETS → STAGE (14 days, 3 results per bucket)
 -------------------------------------------------------------------------------
 
-INSERT INTO RAW_BATCH_OUTPUTS (source_file, raw)
-SELECT 'batch_output_20260220.jsonl', PARSE_JSON(column1) FROM VALUES
+CREATE OR REPLACE TEMPORARY TABLE _stg_usage AS
+SELECT OBJECT_CONSTRUCT_KEEP_NULL(
+    'object',     'bucket',
+    'start_time', start_ts,
+    'end_time',   start_ts + 86400,
+    'results', ARRAY_CONSTRUCT(
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'object',             'organization.usage.completions.result',
+            'input_tokens',       UNIFORM(200000, 400000, RANDOM()),
+            'output_tokens',      UNIFORM(100000, 200000, RANDOM()),
+            'num_model_requests', UNIFORM(2500, 5000, RANDOM()),
+            'input_cached_tokens',UNIFORM(50000, 120000, RANDOM()),
+            'project_id',         'proj_customer_support',
+            'user_id',            NULL,
+            'api_key_id',         'key_prod_001',
+            'model',              'gpt-4o-2024-08-06',
+            'batch',              FALSE
+        ),
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'object',             'organization.usage.completions.result',
+            'input_tokens',       UNIFORM(50000, 150000, RANDOM()),
+            'output_tokens',      UNIFORM(20000, 70000, RANDOM()),
+            'num_model_requests', UNIFORM(800, 2000, RANDOM()),
+            'input_cached_tokens',UNIFORM(5000, 30000, RANDOM()),
+            'project_id',         'proj_customer_support',
+            'user_id',            NULL,
+            'api_key_id',         'key_prod_001',
+            'model',              'gpt-4o-mini-2024-07-18',
+            'batch',              TRUE
+        ),
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'object',             'organization.usage.completions.result',
+            'input_tokens',       UNIFORM(20000, 80000, RANDOM()),
+            'output_tokens',      UNIFORM(10000, 40000, RANDOM()),
+            'num_model_requests', UNIFORM(200, 1200, RANDOM()),
+            'input_cached_tokens',UNIFORM(0, 10000, RANDOM()),
+            'project_id',         'proj_internal_tools',
+            'user_id',            'user_eng_01',
+            'api_key_id',         'key_dev_002',
+            'model',              'gpt-4o-2024-08-06',
+            'batch',              FALSE
+        )
+    )
+) AS data
+FROM (
+    SELECT 1739836800 + (SEQ4() * 86400) AS start_ts
+    FROM TABLE(GENERATOR(ROWCOUNT => 14))
+) g;
 
--- Successful completion
-('{"id":"batch_req_001","custom_id":"ticket-classify-1001","response":{"status_code":200,"request_id":"req_aaa111","body":{"id":"chatcmpl-b001","object":"chat.completion","created":1740070000,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"billing\",\"priority\":\"high\",\"sentiment\":\"negative\",\"suggested_routing\":\"billing_escalation\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":245,"completion_tokens":38,"total_tokens":283},"system_fingerprint":"fp_batch01"}},"error":null}'),
+COPY INTO @openai_raw_stage/usage_buckets/
+FROM (SELECT data FROM _stg_usage)
+FILE_FORMAT = (TYPE = 'JSON', COMPRESSION = NONE)
+SINGLE = TRUE
+OVERWRITE = TRUE;
 
--- Successful completion with longer content
-('{"id":"batch_req_002","custom_id":"ticket-classify-1002","response":{"status_code":200,"request_id":"req_bbb222","body":{"id":"chatcmpl-b002","object":"chat.completion","created":1740070001,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"technical_support\",\"priority\":\"medium\",\"sentiment\":\"neutral\",\"suggested_routing\":\"tier2_support\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":312,"completion_tokens":42,"total_tokens":354},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: product feedback
-('{"id":"batch_req_003","custom_id":"ticket-classify-1003","response":{"status_code":200,"request_id":"req_ccc333","body":{"id":"chatcmpl-b003","object":"chat.completion","created":1740070002,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"feature_request\",\"priority\":\"low\",\"sentiment\":\"positive\",\"suggested_routing\":\"product_feedback\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":189,"completion_tokens":35,"total_tokens":224},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: account issue
-('{"id":"batch_req_004","custom_id":"ticket-classify-1004","response":{"status_code":200,"request_id":"req_ddd444","body":{"id":"chatcmpl-b004","object":"chat.completion","created":1740070003,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"account_access\",\"priority\":\"high\",\"sentiment\":\"negative\",\"suggested_routing\":\"security_team\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":276,"completion_tokens":40,"total_tokens":316},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: general inquiry
-('{"id":"batch_req_005","custom_id":"ticket-classify-1005","response":{"status_code":200,"request_id":"req_eee555","body":{"id":"chatcmpl-b005","object":"chat.completion","created":1740070004,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"general_inquiry\",\"priority\":\"low\",\"sentiment\":\"positive\",\"suggested_routing\":\"self_service\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":156,"completion_tokens":34,"total_tokens":190},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Rate limit error
-('{"id":"batch_req_006","custom_id":"ticket-classify-1006","response":null,"error":{"code":"rate_limit_exceeded","message":"Rate limit reached for gpt-4o-mini in organization org-abc123 on tokens per min. Limit: 200000, Used: 198542, Requested: 3200."}}'),
-
--- Server error
-('{"id":"batch_req_007","custom_id":"ticket-classify-1007","response":null,"error":{"code":"server_error","message":"The server had an error processing your request. Sorry about that!"}}'),
-
--- Content filter in batch
-('{"id":"batch_req_008","custom_id":"ticket-classify-1008","response":{"status_code":200,"request_id":"req_fff666","body":{"id":"chatcmpl-b008","object":"chat.completion","created":1740070007,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":null,"refusal":"Content policy violation detected in input."},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":410,"completion_tokens":8,"total_tokens":418},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: urgent escalation
-('{"id":"batch_req_009","custom_id":"ticket-classify-1009","response":{"status_code":200,"request_id":"req_ggg777","body":{"id":"chatcmpl-b009","object":"chat.completion","created":1740070008,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"outage_report\",\"priority\":\"critical\",\"sentiment\":\"negative\",\"suggested_routing\":\"incident_response\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":502,"completion_tokens":42,"total_tokens":544},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: compliance question
-('{"id":"batch_req_010","custom_id":"ticket-classify-1010","response":{"status_code":200,"request_id":"req_hhh888","body":{"id":"chatcmpl-b010","object":"chat.completion","created":1740070009,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"compliance\",\"priority\":\"high\",\"sentiment\":\"neutral\",\"suggested_routing\":\"legal_compliance\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":388,"completion_tokens":38,"total_tokens":426},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: data export request
-('{"id":"batch_req_011","custom_id":"ticket-classify-1011","response":{"status_code":200,"request_id":"req_iii999","body":{"id":"chatcmpl-b011","object":"chat.completion","created":1740070010,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"data_request\",\"priority\":\"medium\",\"sentiment\":\"neutral\",\"suggested_routing\":\"data_operations\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":267,"completion_tokens":36,"total_tokens":303},"system_fingerprint":"fp_batch01"}},"error":null}'),
-
--- Successful: cancellation
-('{"id":"batch_req_012","custom_id":"ticket-classify-1012","response":{"status_code":200,"request_id":"req_jjj000","body":{"id":"chatcmpl-b012","object":"chat.completion","created":1740070011,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"message":{"role":"assistant","content":"{\"category\":\"cancellation\",\"priority\":\"high\",\"sentiment\":\"negative\",\"suggested_routing\":\"retention_team\"}","refusal":null},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":198,"completion_tokens":37,"total_tokens":235},"system_fingerprint":"fp_batch01"}},"error":null}');
+DROP TABLE _stg_usage;
 
 
 -------------------------------------------------------------------------------
--- USAGE API BUCKETS (daily granularity, 14-day window)
+-- LOAD FROM STAGE → RAW TABLES
 -------------------------------------------------------------------------------
 
-INSERT INTO RAW_USAGE_BUCKETS (source_file, raw)
-SELECT 'usage_export_20260220.json', PARSE_JSON(column1) FROM VALUES
+COPY INTO RAW_CHAT_COMPLETIONS (source_file, raw)
+FROM (
+    SELECT METADATA$FILENAME, $1
+    FROM @openai_raw_stage/chat_completions/
+);
 
-('{"object":"bucket","start_time":1739836800,"end_time":1739923200,"results":[{"object":"organization.usage.completions.result","input_tokens":285400,"output_tokens":142300,"num_model_requests":3420,"input_cached_tokens":82100,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":98200,"output_tokens":45600,"num_model_requests":1250,"input_cached_tokens":12000,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-mini-2024-07-18","batch":true},{"object":"organization.usage.completions.result","input_tokens":52100,"output_tokens":28900,"num_model_requests":890,"input_cached_tokens":0,"project_id":"proj_internal_tools","user_id":"user_eng_01","api_key_id":"key_dev_002","model":"gpt-4o-2024-08-06","batch":false}]}'),
+COPY INTO RAW_BATCH_OUTPUTS (source_file, raw)
+FROM (
+    SELECT METADATA$FILENAME, $1
+    FROM @openai_raw_stage/batch_outputs/
+);
 
-('{"object":"bucket","start_time":1739923200,"end_time":1740009600,"results":[{"object":"organization.usage.completions.result","input_tokens":312800,"output_tokens":156200,"num_model_requests":3780,"input_cached_tokens":95400,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":105600,"output_tokens":48900,"num_model_requests":1380,"input_cached_tokens":14200,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-mini-2024-07-18","batch":true},{"object":"organization.usage.completions.result","input_tokens":48700,"output_tokens":26100,"num_model_requests":820,"input_cached_tokens":0,"project_id":"proj_internal_tools","user_id":"user_eng_01","api_key_id":"key_dev_002","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":15200,"output_tokens":8900,"num_model_requests":210,"input_cached_tokens":0,"project_id":"proj_data_pipeline","user_id":"user_eng_02","api_key_id":"key_dev_003","model":"gpt-4o-mini-2024-07-18","batch":false}]}'),
+COPY INTO RAW_USAGE_BUCKETS (source_file, raw)
+FROM (
+    SELECT METADATA$FILENAME, $1
+    FROM @openai_raw_stage/usage_buckets/
+);
 
-('{"object":"bucket","start_time":1740009600,"end_time":1740096000,"results":[{"object":"organization.usage.completions.result","input_tokens":298500,"output_tokens":148700,"num_model_requests":3590,"input_cached_tokens":88200,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":115800,"output_tokens":52400,"num_model_requests":1490,"input_cached_tokens":18600,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-mini-2024-07-18","batch":true}]}'),
-
-('{"object":"bucket","start_time":1740096000,"end_time":1740182400,"results":[{"object":"organization.usage.completions.result","input_tokens":345200,"output_tokens":172100,"num_model_requests":4120,"input_cached_tokens":102300,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":125400,"output_tokens":58200,"num_model_requests":1620,"input_cached_tokens":22100,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-mini-2024-07-18","batch":true},{"object":"organization.usage.completions.result","input_tokens":67800,"output_tokens":34200,"num_model_requests":1050,"input_cached_tokens":5200,"project_id":"proj_internal_tools","user_id":"user_eng_01","api_key_id":"key_dev_002","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":22400,"output_tokens":12100,"num_model_requests":310,"input_cached_tokens":0,"project_id":"proj_data_pipeline","user_id":"user_eng_02","api_key_id":"key_dev_003","model":"gpt-4o-mini-2024-07-18","batch":false}]}'),
-
-('{"object":"bucket","start_time":1740182400,"end_time":1740268800,"results":[{"object":"organization.usage.completions.result","input_tokens":278900,"output_tokens":138400,"num_model_requests":3340,"input_cached_tokens":78500,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":92100,"output_tokens":42800,"num_model_requests":1180,"input_cached_tokens":10800,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-mini-2024-07-18","batch":true},{"object":"organization.usage.completions.result","input_tokens":55300,"output_tokens":29800,"num_model_requests":920,"input_cached_tokens":2100,"project_id":"proj_internal_tools","user_id":"user_eng_01","api_key_id":"key_dev_002","model":"gpt-4o-2024-08-06","batch":false}]}'),
-
-('{"object":"bucket","start_time":1740268800,"end_time":1740355200,"results":[{"object":"organization.usage.completions.result","input_tokens":18900,"output_tokens":9200,"num_model_requests":245,"input_cached_tokens":4200,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false},{"object":"organization.usage.completions.result","input_tokens":8400,"output_tokens":3800,"num_model_requests":98,"input_cached_tokens":800,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-mini-2024-07-18","batch":true}]}'),
-
-('{"object":"bucket","start_time":1740355200,"end_time":1740441600,"results":[{"object":"organization.usage.completions.result","input_tokens":12400,"output_tokens":5800,"num_model_requests":158,"input_cached_tokens":2800,"project_id":"proj_customer_support","user_id":null,"api_key_id":"key_prod_001","model":"gpt-4o-2024-08-06","batch":false}]}');
+SELECT 'RAW_CHAT_COMPLETIONS' AS tbl, COUNT(*) AS rows FROM RAW_CHAT_COMPLETIONS
+UNION ALL SELECT 'RAW_BATCH_OUTPUTS', COUNT(*) FROM RAW_BATCH_OUTPUTS
+UNION ALL SELECT 'RAW_USAGE_BUCKETS', COUNT(*) FROM RAW_USAGE_BUCKETS;
