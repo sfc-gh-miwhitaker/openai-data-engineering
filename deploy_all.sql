@@ -847,6 +847,97 @@ SELECT
     content_summary
 FROM classified;
 
+-- DT_BATCH_ENRICHED: QA OpenAI's classifications with Cortex
+CREATE OR REPLACE DYNAMIC TABLE DT_BATCH_ENRICHED
+  TARGET_LAG = '10 minutes'
+  WAREHOUSE = SFE_OPENAI_DATA_ENG_WH
+  REFRESH_MODE = AUTO
+  INITIALIZE = ON_CREATE
+  COMMENT = 'DEMO: Approach 3 - Cortex QA of batch classifications (Expires: 2026-03-28)'
+AS
+WITH classified AS (
+    SELECT
+        batch_request_id, custom_id, outcome, model, content, content_parsed,
+        refusal, total_tokens,
+        content_parsed:category::STRING                     AS openai_category,
+        content_parsed:priority::STRING                     AS openai_priority,
+        content_parsed:sentiment::STRING                    AS openai_sentiment,
+        content_parsed:suggested_routing::STRING            AS openai_routing,
+        SNOWFLAKE.CORTEX.CLASSIFY_TEXT(
+            custom_id || ': ' || COALESCE(content, refusal, 'no content'),
+            ['billing', 'technical_support', 'feature_request', 'account_access',
+             'general_inquiry', 'outage_report', 'compliance', 'cancellation',
+             'data_request']
+        )                                                   AS cortex_result,
+        SNOWFLAKE.CORTEX.SENTIMENT(
+            COALESCE(content, refusal, 'no content')
+        )                                                   AS cortex_sentiment_score
+    FROM DT_BATCH_OUTCOMES
+    WHERE outcome = 'SUCCESS'
+      AND content_parsed IS NOT NULL
+)
+SELECT
+    batch_request_id, custom_id, outcome, model, content, content_parsed,
+    openai_category, openai_priority, openai_sentiment, openai_routing,
+    cortex_result:label::STRING                             AS cortex_category,
+    cortex_sentiment_score,
+    IFF(openai_category = cortex_result:label::STRING,
+        'AGREE', 'DISAGREE')                                AS classification_agreement,
+    total_tokens
+FROM classified;
+
+-- DT_PII_SCAN: Detect PII in AI outputs using Cortex COMPLETE
+-- MODEL: claude-opus-4-6 per customer request (recommended for cost: llama3.1-70b)
+CREATE OR REPLACE DYNAMIC TABLE DT_PII_SCAN
+  TARGET_LAG = '30 minutes'
+  WAREHOUSE = SFE_OPENAI_DATA_ENG_WH
+  REFRESH_MODE = AUTO
+  INITIALIZE = ON_CREATE
+  COMMENT = 'DEMO: Approach 3 - PII detection in AI outputs (Expires: 2026-03-28)'
+AS
+WITH completion_texts AS (
+    SELECT completion_id AS source_id, 'completion' AS source_type,
+           content AS text_to_scan, created_at
+    FROM DT_COMPLETIONS
+    WHERE content IS NOT NULL AND is_refusal = FALSE
+    UNION ALL
+    SELECT completion_id AS source_id, 'tool_call_args' AS source_type,
+           arguments_json AS text_to_scan, created_at
+    FROM DT_TOOL_CALLS
+    WHERE arguments_json IS NOT NULL
+),
+scanned AS (
+    SELECT source_id, source_type, text_to_scan, created_at,
+        SNOWFLAKE.CORTEX.COMPLETE(
+            'claude-opus-4-6',
+            'Analyze the following text and return ONLY a JSON object with these fields: '
+            || '{"has_pii": true/false, "pii_types": ["list of types found"], '
+            || '"risk_level": "none/low/medium/high"}. '
+            || 'PII types to check: email, phone, SSN, credit card, address, name, date of birth. '
+            || 'Text to analyze: ' || LEFT(text_to_scan, 2000)
+        ) AS pii_analysis_raw
+    FROM completion_texts
+)
+SELECT source_id, source_type, text_to_scan, created_at,
+       pii_analysis_raw, TRY_PARSE_JSON(pii_analysis_raw) AS pii_analysis_parsed
+FROM scanned;
+
+-- V_ENRICHMENT_DASHBOARD: Aggregated view for Streamlit
+CREATE OR REPLACE VIEW V_ENRICHMENT_DASHBOARD
+  COMMENT = 'DEMO: Approach 3 - Enrichment dashboard aggregations (Expires: 2026-03-28)'
+AS
+SELECT
+    topic_classification,
+    COUNT(*)                                                AS response_count,
+    ROUND(AVG(sentiment_score), 3)                          AS avg_sentiment,
+    ROUND(AVG(topic_confidence), 3)                         AS avg_topic_confidence,
+    SUM(total_tokens)                                       AS total_tokens_consumed,
+    ROUND(AVG(total_tokens), 0)                             AS avg_tokens_per_response,
+    SUM(IFF(has_tool_calls, 1, 0))                          AS tool_call_responses,
+    SUM(IFF(is_structured_output, 1, 0))                    AS structured_output_count
+FROM DT_ENRICHED_COMPLETIONS
+GROUP BY topic_classification;
+
 -------------------------------------------------------------------------------
 -- 9. STREAMLIT APP - Interactive Explorer
 --    Deploys the Streamlit in Snowflake app for exploring all three approaches.
