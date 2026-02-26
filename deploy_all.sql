@@ -55,6 +55,7 @@ CREATE OR REPLACE FILE FORMAT openai_jsonl_ff
 
 CREATE OR REPLACE STAGE openai_raw_stage
   FILE_FORMAT = openai_jsonl_ff
+  DIRECTORY = (ENABLE = TRUE)
   COMMENT = 'DEMO: Landing zone for OpenAI API export files (Expires: 2026-03-28)';
 
 -------------------------------------------------------------------------------
@@ -502,7 +503,7 @@ FROM (
 );
 
 -- Quick sanity check
-SELECT 'RAW_CHAT_COMPLETIONS' AS tbl, COUNT(*) AS rows FROM RAW_CHAT_COMPLETIONS
+SELECT 'RAW_CHAT_COMPLETIONS' AS tbl, COUNT(*) AS row_count FROM RAW_CHAT_COMPLETIONS
 UNION ALL SELECT 'RAW_BATCH_OUTPUTS', COUNT(*) FROM RAW_BATCH_OUTPUTS
 UNION ALL SELECT 'RAW_USAGE_BUCKETS', COUNT(*) FROM RAW_USAGE_BUCKETS;
 

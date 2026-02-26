@@ -27,4 +27,5 @@ CREATE OR REPLACE FILE FORMAT openai_jsonl_ff
 
 CREATE OR REPLACE STAGE openai_raw_stage
   FILE_FORMAT = openai_jsonl_ff
+  DIRECTORY = (ENABLE = TRUE)
   COMMENT = 'DEMO: Landing zone for OpenAI API export files (Expires: 2026-03-28)';
