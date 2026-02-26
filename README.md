@@ -115,7 +115,10 @@ openai-data-engineering/
 ├── deploy_all.sql                            # Single-file deployment
 ├── teardown_all.sql                          # Complete cleanup
 ├── diagrams/
-│   └── data-flow.md                          # Architecture diagram
+│   ├── data-flow.md                          # High-level architecture overview
+│   ├── approach1-cortex-enrichment.md        # Approach 1 operational flow
+│   ├── approach2-medallion.md                # Approach 2 operational flow
+│   └── approach3-schema-on-read.md           # Approach 3 operational flow
 ├── sql/
 │   ├── 01_setup/
 │   │   └── 01_create_schema.sql
